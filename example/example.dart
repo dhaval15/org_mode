@@ -1,4 +1,4 @@
-import 'package:org_parser/org_parser.dart';
+import 'package:org_mode/org_mode.dart';
 
 void main() {
   const docString = '''* TODO [#A] foo bar

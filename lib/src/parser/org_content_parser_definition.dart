@@ -1,102 +1,14 @@
-import 'package:org_parser/org_parser.dart';
-import 'package:org_parser/src/org.dart';
-import 'package:org_parser/src/util/util.dart';
 import 'package:petitparser/petitparser.dart';
+import '../grammar/grammar.dart';
+import '../org/org.dart';
+import '../util/util.dart';
 
-final org = OrgParserDefinition().build();
-
-class OrgParserDefinition extends OrgGrammarDefinition {
-  @override
-  Parser start() => super.start().map((items) {
-        final topContent = items[0] as OrgContent?;
-        final sections = items[1] as List;
-        return OrgDocument(topContent, List.unmodifiable(sections));
-      });
-
-  @override
-  Parser document() => super.document().map((items) {
-        final firstContent = items[0] as OrgContent?;
-        final sections = items[1] as List;
-        return [firstContent, _nestSections(sections.cast<OrgSection>())];
-      });
-
-  List<OrgSection> _nestSections(List<OrgSection> sections) {
-    if (sections.length < 2) {
-      return sections;
-    }
-    final result = <OrgSection>[];
-    for (var i = 0; i < sections.length; i++) {
-      final parent = sections[i];
-      final children = sections
-          .sublist(i + 1)
-          .takeWhile((item) => item is OrgSection && item.level > parent.level)
-          .cast<OrgSection>()
-          .toList();
-      if (children.isNotEmpty) {
-        result.add(parent.copyWith(sections: _nestSections(children)));
-        i += children.length;
-      } else {
-        result.add(parent);
-      }
-    }
-    return result;
-  }
-
-  @override
-  Parser section() => super.section().map((items) {
-        final headline = items[0] as OrgHeadline;
-        final content = items[1] as OrgContent?;
-        return OrgSection(headline, content);
-      });
-
-  @override
-  Parser headline() => super.headline().map((items) {
-        final stars = items[0] as String;
-        final keyword = items[1] as String?;
-        final priority = items[2] as String?;
-        final title = items[3] as Token?;
-        final tags = items[4] as List?;
-        return OrgHeadline(
-          stars,
-          keyword,
-          priority,
-          title?.value as OrgContent?,
-          title?.input,
-          tags?.cast<String>(),
-        );
-      });
-
-  @override
-  Parser title() {
-    final limit = ref0(tags) | lineEnd();
-    return _textRun(limit)
-        .plusLazy(limit)
-        .castList<OrgNode>()
-        .map((items) => OrgContent(items))
-        .token();
-  }
-
-  @override
-  Parser priority() => super.priority().flatten('Priority expected');
-
-  @override
-  Parser tags() => super.tags().castList().pick(1);
-
-  @override
-  Parser content() => super
-      .content()
-      .map((content) => _orgContentParser.parse(content as String).value);
-}
-
-final _orgContentParser = OrgContentParserDefinition().build();
-
-Parser _textRun([Parser? limit]) {
-  final definition = OrgContentParserDefinition();
-  final args = limit == null ? const <Object>[] : [limit];
-  return definition.build(start: definition.textRun, arguments: args);
-}
+typedef OrgMetaListener = void Function(OrgMeta meta);
 
 class OrgContentParserDefinition extends OrgContentGrammarDefinition {
+  final OrgMetaListener onMeta;
+  OrgContentParserDefinition(this.onMeta);
+
   @override
   Parser start() =>
       super.start().castList<OrgNode>().map((elems) => OrgContent(elems));
@@ -175,7 +87,9 @@ class OrgContentParserDefinition extends OrgContentGrammarDefinition {
         final indent = items[0] as String;
         final keyword = items[1] as String;
         final trailing = items[2] as String;
-        return OrgMeta(indent, keyword, trailing);
+        final meta = OrgMeta(indent, keyword, trailing);
+        onMeta.call(meta);
+        return meta;
       });
 
   @override
@@ -305,10 +219,16 @@ class OrgContentParserDefinition extends OrgContentGrammarDefinition {
       .map((elems) => OrgContent(elems));
 
   @override
-  Parser timestamp() => super
-      .timestamp()
-      .flatten('Timestamp expected')
-      .map((value) => OrgTimestamp(value));
+  Parser timestamp() => super.timestamp().map((value) {
+        final list = value as List;
+        final isActive = list[0] == '<';
+        final dateList = list[1] as List?;
+        final day = _parseDay(dateList);
+        final timeList = list[2] as List?;
+        final time = _parseTime(timeList);
+        return OrgTimestamp(
+            timestamp: Timestamp(day, time, isActive: isActive));
+      });
 
   @override
   Parser keyword() =>
@@ -316,13 +236,28 @@ class OrgContentParserDefinition extends OrgContentGrammarDefinition {
 
   @override
   Parser planningLine() => super.planningLine().map((values) {
-        final indent = values[0] as String;
-        final rest = values[1] as List;
-        final keyword = rest[0] as OrgKeyword;
-        final bodyElems = rest[1] as List;
-        final body = OrgContent(bodyElems.cast<OrgNode>());
-        final trailing = values[2] as String;
-        return OrgPlanningLine(indent, keyword, body, trailing);
+        final filtered = [
+          values[1][0],
+          ...values[1][1],
+        ].where((element) => element is OrgTimestamp || element is OrgKeyword);
+        final timestamps = <OrgTimestamp>[];
+        OrgKeyword? key;
+        for (final e in filtered) {
+          if (e is OrgKeyword) {
+            key = e;
+          }
+          if (e is OrgTimestamp) {
+            if (key != null) {
+              timestamps.add(e.withKeyword(key.content));
+              key = null;
+            } else {
+              timestamps.add(e);
+            }
+          }
+        }
+        return OrgPlanningLine(
+          timestamps: timestamps,
+        );
       });
 
   @override
@@ -498,18 +433,17 @@ class OrgContentParserDefinition extends OrgContentGrammarDefinition {
       });
 }
 
-final orgFileLink = OrgFileLinkParserDefinition().build();
+Day _parseDay(List? list) {
+  if (list == null) return Day.none;
+  final year = int.parse(list[0]);
+  final month = int.parse(list[2]);
+  final day = int.parse(list[4]);
+  return Day(day, month, year);
+}
 
-class OrgFileLinkParserDefinition extends OrgFileLinkGrammarDefinition {
-  @override
-  Parser start() => super.start().map((values) {
-        final scheme = values[0] as String;
-        final body = values[1] as String;
-        final extra = values[2] as String?;
-        return OrgFileLink(
-          scheme.isEmpty ? null : scheme,
-          body,
-          extra,
-        );
-      });
+Time _parseTime(List? list) {
+  if (list == null) return Time.none;
+  final hour = int.parse(list[0]);
+  final minute = int.parse(list[2]);
+  return Time(hour, minute);
 }

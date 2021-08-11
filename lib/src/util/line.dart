@@ -1,5 +1,5 @@
-import 'package:org_parser/src/util/bof.dart';
-import 'package:org_parser/src/util/lookbehind.dart';
+import 'package:org_mode/src/util/bof.dart';
+import 'package:org_mode/src/util/lookbehind.dart';
 import 'package:petitparser/petitparser.dart';
 
 /// Returns a parser that matches the start of a line; this could be the

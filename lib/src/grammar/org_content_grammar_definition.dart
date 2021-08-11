@@ -1,59 +1,5 @@
-library org_parser;
-
-import 'package:org_parser/src/util/util.dart';
 import 'package:petitparser/petitparser.dart';
-
-// See https://orgmode.org/worg/dev/org-syntax.html
-
-class OrgGrammarDefinition extends GrammarDefinition {
-  @override
-  Parser start() => ref0(document).end();
-
-  Parser document() => ref0(content).optional() & ref0(section).star();
-
-  Parser section() => ref0(headline) & ref0(content).optional();
-
-  Parser headline() => drop(ref0(_headline), [-1]);
-
-  Parser _headline() =>
-      ref0(stars).trim() &
-      ref0(todoKeyword).trim().optional() &
-      ref0(priority).trim().optional() &
-      ref0(title).optional() &
-      ref0(tags).optional() &
-      lineEnd();
-
-  Parser stars() =>
-      (lineStart() & char('*').plus() & char(' ')).flatten('Stars expected');
-
-  Parser todoKeyword() => string('TODO') | string('DONE');
-
-  Parser priority() => string('[#') & letter() & char(']');
-
-  Parser title() {
-    final limit = ref0(tags) | lineEnd();
-    return _textRun(limit).plusLazy(limit);
-  }
-
-  Parser tags() =>
-      string(' :') &
-      ref0(tag).separatedBy(char(':'), includeSeparators: false) &
-      char(':') &
-      lineEnd().and();
-
-  Parser tag() => pattern('a-zA-Z0-9_@#%').plus().flatten('Tags expected');
-
-  Parser content() => ref0(_content).flatten('Content expected');
-
-  Parser _content() =>
-      ref0(stars).not() & any().plusLazy(ref0(stars) | endOfInput());
-}
-
-Parser _textRun([Parser? limit]) {
-  final definition = OrgContentGrammarDefinition();
-  final args = limit == null ? const <Object>[] : [limit];
-  return definition.build(start: definition.textRun, arguments: args);
-}
+import '../util/util.dart';
 
 class OrgContentGrammarDefinition extends GrammarDefinition {
   @override
@@ -474,6 +420,8 @@ class OrgContentGrammarDefinition extends GrammarDefinition {
   Parser keyword() => ref0(_keyword).flatten('Expected keyword');
 
   Parser _keyword() =>
+      string('CREATED_AT:') |
+      string('UPDATED_AT:') |
       string('SCHEDULED:') |
       string('DEADLINE:') |
       string('CLOCK:') |
@@ -635,20 +583,4 @@ class OrgContentGrammarDefinition extends GrammarDefinition {
       string(start) &
       string(end).neg().plusLazy(string(end)).flatten('LaTeX body expected') &
       string(end);
-}
-
-class OrgFileLinkGrammarDefinition extends GrammarDefinition {
-  @override
-  Parser start() =>
-      ref0(scheme) &
-      ref0(body) &
-      (string('::') & ref0(extra)).pick(1).optional();
-
-  Parser scheme() =>
-      (string('file:') | anyOf('/.').and()).flatten('Expected link scheme');
-
-  Parser body() =>
-      any().plusLazy(string('::') | endOfInput()).flatten('Expected link body');
-
-  Parser extra() => any().star().flatten('Expected link extra');
 }
